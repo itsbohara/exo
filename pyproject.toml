@@ -25,8 +25,6 @@ dependencies = [
   "openai-harmony>=0.0.8",
   "httpx>=0.28.1",
   "tomlkit>=0.14.0",
-  "pillow>=11.0,<12.0",                        # compatibility with mflux
-  "mflux==0.15.5",
   "python-multipart>=0.0.21",
   "msgspec>=0.19.0",
   "zstandard>=0.23.0",
@@ -61,7 +59,7 @@ members = ["rust/exo_pyo3_bindings", "bench"]
 
 [tool.uv.sources]
 exo_pyo3_bindings = { workspace = true }
-mlx = { git = "https://github.com/itsbohara/mlx.git", rev = "34b96c5ed2b0d3abe2b4bb5aef969e837df332a7", marker = "sys_platform == 'darwin'" }
+mlx = { git = "https://github.com/itsbohara/mlx.git", rev = "3f21b3a2aa51cf725f662b983fd747bdf033ead9", marker = "sys_platform == 'darwin'" }
 #mlx-lm = { git = "https://github.com/davidmcc73/mlx-lm", branch = "stable" }
 # Uncomment to use local mlx/mlx-lm development versions:
 # mlx = { path = "/Users/Shared/mlx", editable=true }
