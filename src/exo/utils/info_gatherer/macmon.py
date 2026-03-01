@@ -1,9 +1,26 @@
+import re
+import subprocess
 from typing import Self
 
 from pydantic import BaseModel
 
 from exo.shared.types.profiling import MemoryUsage, SystemPerformanceProfile
 from exo.utils.pydantic_ext import TaggedModel
+
+
+def _get_reclaimable_bytes() -> int:
+    """Return reclaimable (inactive + purgeable) memory bytes via vm_stat."""
+    try:
+        out = subprocess.check_output(["vm_stat"], text=True)  # noqa: S603, S607
+        page_size = 16384  # Apple Silicon always uses 16KB pages
+        size_match = re.search(r"page size of (\d+) bytes", out)
+        if size_match:
+            page_size = int(size_match.group(1))
+        inactive = int(re.search(r"Pages inactive:\s+(\d+)", out).group(1))  # type: ignore[union-attr]
+        purgeable = int(re.search(r"Pages purgeable:\s+(\d+)", out).group(1))  # type: ignore[union-attr]
+        return (inactive + purgeable) * page_size
+    except Exception:  # noqa: BLE001
+        return 0
 
 
 class _TempMetrics(BaseModel, extra="ignore"):
@@ -59,7 +76,8 @@ class MacmonMetrics(TaggedModel):
             ),
             memory=MemoryUsage.from_bytes(
                 ram_total=raw.memory.ram_total,
-                ram_available=(raw.memory.ram_total - raw.memory.ram_usage),
+                ram_available=(raw.memory.ram_total - raw.memory.ram_usage)
+                + _get_reclaimable_bytes(),
                 swap_total=raw.memory.swap_total,
                 swap_available=(raw.memory.swap_total - raw.memory.swap_usage),
             ),
