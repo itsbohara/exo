@@ -61,7 +61,7 @@ members = ["rust/exo_pyo3_bindings", "bench"]
 
 [tool.uv.sources]
 exo_pyo3_bindings = { workspace = true }
-mlx = { git = "https://github.com/rltakashige/mlx-jaccl-fix-small-recv.git", rev = "257d5692fc7af6bba3b8afaeb63c549b7d1e43d5", marker = "sys_platform == 'darwin'" }
+mlx = { git = "https://github.com/itsbohara/mlx.git", rev = "115c885607c7fb5e59a7ff66d1b3a18aed56ce13", marker = "sys_platform == 'darwin'" }
 #mlx-lm = { git = "https://github.com/davidmcc73/mlx-lm", branch = "stable" }
 # Uncomment to use local mlx/mlx-lm development versions:
 # mlx = { path = "/Users/Shared/mlx", editable=true }
