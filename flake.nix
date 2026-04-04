@@ -72,7 +72,7 @@
       ];
 
       perSystem =
-        { config, self', inputs', pkgs, lib, system, ... }:
+        { config, self', pkgs, lib, system, ... }:
         let
           # Use pinned nixpkgs for swift-format (swift is broken on x86_64-linux in newer nixpkgs)
           pkgsSwift = import inputs.nixpkgs-swift { inherit system; };
@@ -84,6 +84,17 @@
             config.allowUnfreePredicate = pkg: (pkg.pname or "") == "metal-toolchain";
             overlays = [
               (import ./nix/apple-sdk-overlay.nix)
+              (final: prev: {
+                macmon = prev.macmon.overrideAttrs (_: {
+                  version = "git";
+                  src = final.fetchFromGitHub {
+                    owner = "swiftraccoon";
+                    repo = "macmon";
+                    rev = "9154d234f763fbeffdcb4135d0bbbaf80609699b";
+                    hash = "sha256-CwhilKNbs5XL9/tF5DMwyPBlE/hpmjGNTuxQ36sM50M=";
+                  };
+                });
+              })
             ];
           };
           treefmt = {
@@ -117,12 +128,13 @@
               uvLock = builtins.fromTOML (builtins.readFile ./uv.lock);
               mlxPackage = builtins.head (builtins.filter (p: p.name == "mlx" && p.source ? git) uvLock.package);
               uvLockMlxVersion = mlxPackage.version;
+              uvLockMlxRev = builtins.elemAt (builtins.split "#" mlxPackage.source.git) 2;
             in
             {
               metal-toolchain = pkgs.callPackage ./nix/metal-toolchain.nix { };
               mlx = pkgs.callPackage ./nix/mlx.nix {
                 inherit (self'.packages) metal-toolchain;
-                inherit uvLockMlxVersion;
+                inherit uvLockMlxVersion uvLockMlxRev;
               };
               default = self'.packages.exo;
             }

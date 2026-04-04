@@ -3,9 +3,10 @@ from typing import final
 
 from pydantic import Field
 
+from exo.shared.models.model_cards import ModelCard
 from exo.shared.topology import Connection
 from exo.shared.types.chunks import GenerationChunk, InputImageChunk
-from exo.shared.types.common import CommandId, Id, NodeId, SessionId, SystemId
+from exo.shared.types.common import CommandId, Id, ModelId, NodeId, SessionId, SystemId
 from exo.shared.types.tasks import Task, TaskId, TaskStatus
 from exo.shared.types.worker.downloads import DownloadProgress
 from exo.shared.types.worker.instances import Instance, InstanceId
@@ -73,10 +74,6 @@ class RunnerStatusUpdated(BaseEvent):
     runner_status: RunnerStatus
 
 
-class RunnerDeleted(BaseEvent):
-    runner_id: RunnerId
-
-
 class NodeTimedOut(BaseEvent):
     node_id: NodeId
 
@@ -108,6 +105,14 @@ class TopologyEdgeCreated(BaseEvent):
 
 class TopologyEdgeDeleted(BaseEvent):
     conn: Connection
+
+
+class CustomModelCardAdded(BaseEvent):
+    model_card: ModelCard
+
+
+class CustomModelCardDeleted(BaseEvent):
+    model_id: ModelId
 
 
 @final
@@ -142,7 +147,6 @@ Event = (
     | InstanceCreated
     | InstanceDeleted
     | RunnerStatusUpdated
-    | RunnerDeleted
     | NodeTimedOut
     | NodeGatheredInfo
     | NodeDownloadProgress
@@ -152,6 +156,8 @@ Event = (
     | TopologyEdgeDeleted
     | TracesCollected
     | TracesMerged
+    | CustomModelCardAdded
+    | CustomModelCardDeleted
 )
 
 

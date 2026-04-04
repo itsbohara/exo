@@ -1,3 +1,4 @@
+from collections.abc import Sequence
 from copy import copy
 from itertools import count
 from math import inf
@@ -102,8 +103,15 @@ class TopicRouter[T: CamelCaseModel]:
 
 class Router:
     @classmethod
-    def create(cls, identity: Keypair) -> "Router":
-        return cls(handle=NetworkingHandle(identity))
+    def create(
+        cls,
+        identity: Keypair,
+        bootstrap_peers: Sequence[str] = (),
+        listen_port: int = 0,
+    ) -> "Router":
+        return cls(
+            handle=NetworkingHandle(identity, list(bootstrap_peers), listen_port)
+        )
 
     def __init__(self, handle: NetworkingHandle):
         self.topic_routers: dict[str, TopicRouter[CamelCaseModel]] = {}
@@ -219,6 +227,10 @@ class Router:
             async for topic, data in networked_items:
                 try:
                     logger.trace(f"Sending message on {topic} with payload {data}")
+                    if len(data) > 1024 * 1024:
+                        logger.warning(
+                            "Sending overlarge payload, network performance may be temporarily degraded"
+                        )
                     await self._net.gossipsub_publish(topic, data)
                 except NoPeersSubscribedToTopicError:
                     pass
@@ -258,6 +270,6 @@ def get_node_id_keypair(
 
         # if no valid credentials, create new ones and persist
         with open(path, "w+b") as f:
-            keypair = Keypair.generate_ed25519()
+            keypair = Keypair.generate()
             f.write(keypair.to_bytes())
             return keypair

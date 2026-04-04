@@ -1,4 +1,5 @@
 import os
+import resource
 
 import loguru
 
@@ -7,6 +8,7 @@ from exo.shared.types.tasks import Task, TaskId
 from exo.shared.types.worker.instances import BoundInstance
 from exo.shared.types.worker.runners import RunnerFailed
 from exo.utils.channels import ClosedResourceError, MpReceiver, MpSender
+from exo.worker.engines.mlx.patches import apply_mlx_patches
 
 logger: "loguru.Logger" = loguru.logger
 
@@ -21,6 +23,9 @@ def entrypoint(
     global logger
     logger = _logger
 
+    soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
+    resource.setrlimit(resource.RLIMIT_NOFILE, (min(max(soft, 2048), hard), hard))
+
     fast_synch_override = os.environ.get("EXO_FAST_SYNCH")
     if fast_synch_override != "off":
         os.environ["MLX_METAL_FAST_SYNCH"] = "1"
@@ -32,11 +37,21 @@ def entrypoint(
     # Import main after setting global logger - this lets us just import logger from this module
     try:
         if bound_instance.is_image_model:
-            from exo.worker.runner.image_models.runner import main
-        else:
-            from exo.worker.runner.llm_inference.runner import main
+            from exo.worker.runner.image_models.runner import Runner as ImageRunner
 
-        main(bound_instance, event_sender, task_receiver, cancel_receiver)
+            runner = ImageRunner(
+                bound_instance, event_sender, task_receiver, cancel_receiver
+            )
+            runner.main()
+        else:
+            from exo.worker.runner.llm_inference.runner import Runner
+
+            apply_mlx_patches()
+
+            runner = Runner(
+                bound_instance, event_sender, task_receiver, cancel_receiver
+            )
+            runner.main()
 
     except ClosedResourceError:
         logger.warning("Runner communication closed unexpectedly")

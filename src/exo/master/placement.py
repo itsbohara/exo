@@ -32,7 +32,10 @@ from exo.shared.types.memory import Memory
 from exo.shared.types.profiling import MemoryUsage, NodeNetworkInfo
 from exo.shared.types.tasks import Task, TaskId, TaskStatus
 from exo.shared.types.worker.downloads import (
+    DownloadCompleted,
+    DownloadFailed,
     DownloadOngoing,
+    DownloadPending,
     DownloadProgress,
 )
 from exo.shared.types.worker.instances import (
@@ -60,6 +63,45 @@ def add_instance_to_placements(
     return {**current_instances, command.instance.instance_id: command.instance}
 
 
+def _get_node_download_fraction(
+    node_id: NodeId,
+    model_id: ModelId,
+    download_status: Mapping[NodeId, Sequence[DownloadProgress]],
+) -> float:
+    """Return the download fraction (0.0–1.0) for a model on a given node."""
+    for progress in download_status.get(node_id, []):
+        if progress.shard_metadata.model_card.model_id != model_id:
+            continue
+        match progress:
+            case DownloadCompleted():
+                return 1.0
+            case DownloadOngoing():
+                total = progress.download_progress.total.in_bytes
+                return (
+                    progress.download_progress.downloaded.in_bytes / total
+                    if total > 0
+                    else 0.0
+                )
+            case DownloadPending():
+                total = progress.total.in_bytes
+                return progress.downloaded.in_bytes / total if total > 0 else 0.0
+            case DownloadFailed():
+                return 0.0
+    return 0.0
+
+
+def _cycle_download_score(
+    cycle: Cycle,
+    model_id: ModelId,
+    download_status: Mapping[NodeId, Sequence[DownloadProgress]],
+) -> float:
+    """Sum of download fractions across all nodes in a cycle."""
+    return sum(
+        _get_node_download_fraction(node_id, model_id, download_status)
+        for node_id in cycle
+    )
+
+
 def place_instance(
     command: PlaceInstance,
     topology: Topology,
@@ -67,6 +109,7 @@ def place_instance(
     node_memory: Mapping[NodeId, MemoryUsage],
     node_network: Mapping[NodeId, NodeNetworkInfo],
     required_nodes: set[NodeId] | None = None,
+    download_status: Mapping[NodeId, Sequence[DownloadProgress]] | None = None,
 ) -> dict[InstanceId, Instance]:
     cycles = topology.get_cycles()
     candidate_cycles = list(filter(lambda it: len(it) >= command.min_nodes, cycles))
@@ -90,14 +133,19 @@ def place_instance(
                 f"Requested Tensor sharding but this model does not support tensor parallelism: {command.model_card.model_id}"
             )
         # TODO: the condition here for tensor parallel is not correct, but it works good enough for now.
+        kv_heads = command.model_card.num_key_value_heads
         cycles_with_sufficient_memory = [
             cycle
             for cycle in cycles_with_sufficient_memory
             if command.model_card.hidden_size % len(cycle) == 0
+            and (kv_heads is None or kv_heads % len(cycle) == 0)
         ]
         if not cycles_with_sufficient_memory:
             raise ValueError(
-                f"No tensor sharding found for model with hidden_size {command.model_card.hidden_size} candidate cycles"
+                f"No tensor sharding found for model with "
+                f"hidden_size={command.model_card.hidden_size}"
+                f"{f', num_key_value_heads={kv_heads}' if kv_heads is not None else ''}"
+                f" across candidate cycles"
             )
     if command.sharding == Sharding.Pipeline and command.model_card.model_id == ModelId(
         "mlx-community/DeepSeek-V3.1-8bit"
@@ -125,11 +173,21 @@ def place_instance(
         if any(topology.node_is_leaf(node_id) for node_id in cycle)
     ]
 
+    resolved_download_status = download_status or {}
+    candidate_cycles = (
+        cycles_with_leaf_nodes if cycles_with_leaf_nodes != [] else smallest_cycles
+    )
+
     selected_cycle = max(
-        cycles_with_leaf_nodes if cycles_with_leaf_nodes != [] else smallest_cycles,
-        key=lambda cycle: sum(
-            (node_memory[node_id].ram_available for node_id in cycle),
-            start=Memory(),
+        candidate_cycles,
+        key=lambda cycle: (
+            _cycle_download_score(
+                cycle, command.model_card.model_id, resolved_download_status
+            ),
+            sum(
+                (node_memory[node_id].ram_available for node_id in cycle),
+                start=Memory(),
+            ),
         ),
     )
 

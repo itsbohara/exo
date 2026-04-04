@@ -26,6 +26,8 @@ exo connects all your devices into an AI cluster. Not only does exo enable runni
 - **Topology-Aware Auto Parallel**: exo figures out the best way to split your model across all available devices based on a realtime view of your device topology. It takes into account device resources and network latency/bandwidth between each link.
 - **Tensor Parallelism**: exo supports sharding models, for up to 1.8x speedup on 2 devices and 3.2x speedup on 4 devices.
 - **MLX Support**: exo uses [MLX](https://github.com/ml-explore/mlx) as an inference backend and [MLX distributed](https://ml-explore.github.io/mlx/build/html/usage/distributed.html) for distributed communication.
+- **Multiple API Compatibility**: Compatible with OpenAI Chat Completions API, Claude Messages API, OpenAI Responses API, and Ollama API - use your existing tools and clients.
+- **Custom Model Support**: Load custom models from HuggingFace hub to expand the range of available models.
 
 ## Dashboard
 
@@ -93,17 +95,27 @@ Then restart the Nix daemon: `sudo launchctl kickstart -k system/org.nixos.nix-d
   /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
   ```
 - [uv](https://github.com/astral-sh/uv) (for Python dependency management)
-- [macmon](https://github.com/vladkens/macmon) (for hardware monitoring on Apple Silicon)
 - [node](https://github.com/nodejs/node) (for building the dashboard)
 
   ```bash
-  brew install uv macmon node
+  brew install uv node
   ```
 - [rust](https://github.com/rust-lang/rustup) (to build Rust bindings, nightly for now)
 
   ```bash
   curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
   rustup toolchain install nightly
+  ```
+- [macmon](https://github.com/vladkens/macmon) (for hardware monitoring on Apple Silicon)
+
+  Install the pinned fork revision used by this repo instead of Homebrew `macmon`.
+  Homebrew `macmon 0.6.1` still crashes on Apple M5.
+
+  ```bash
+  cargo install --git https://github.com/swiftraccoon/macmon \
+    --rev 9154d234f763fbeffdcb4135d0bbbaf80609699b \
+    macmon \
+    --force
   ```
 
 Clone the repo, build the dashboard, and run exo:
@@ -196,6 +208,8 @@ exo follows the [XDG Base Directory Specification](https://specifications.freede
 - **Configuration files**: `~/.config/exo/` (or `$XDG_CONFIG_HOME/exo/`)
 - **Data files**: `~/.local/share/exo/` (or `$XDG_DATA_HOME/exo/`)
 - **Cache files**: `~/.cache/exo/` (or `$XDG_CACHE_HOME/exo/`)
+- **Log files**: `~/.cache/exo/exo_log/` (with automatic log rotation)
+- **Custom model cards**: `~/.local/share/exo/custom_model_cards/`
 
 You can override these locations by setting the corresponding XDG environment variables.
 
@@ -275,7 +289,50 @@ After that, RDMA will be enabled in macOS and exo will take care of the rest.
 
 ---
 
+## Environment Variables
+
+exo supports several environment variables for configuration:
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `EXO_DEFAULT_MODELS_DIR` | Default directory for model downloads and caches. Always first in the writable dirs list. | `~/.local/share/exo/models` (Linux) or `~/.exo/models` (macOS) |
+| `EXO_MODELS_DIRS` | Colon-separated additional writable directories for model downloads. Checked in order after the default; first with enough free space is used. | None |
+| `EXO_MODELS_READ_ONLY_DIRS` | Colon-separated read-only directories to search for pre-downloaded models (e.g., NFS mounts, shared storage). Models here cannot be deleted. | None |
+| `EXO_OFFLINE` | Run without internet connection (uses only local models) | `false` |
+| `EXO_ENABLE_IMAGE_MODELS` | Enable image model support | `false` |
+| `EXO_LIBP2P_NAMESPACE` | Custom namespace for cluster isolation | None |
+| `EXO_FAST_SYNCH` | Control MLX_METAL_FAST_SYNCH behavior (for JACCL backend) | Auto |
+| `EXO_TRACING_ENABLED` | Enable distributed tracing for performance analysis | `false` |
+
+**Example usage:**
+
+```bash
+# Use pre-downloaded models from NFS mount (read-only)
+EXO_MODELS_READ_ONLY_DIRS=/mnt/nfs/models:/opt/ai-models uv run exo
+
+# Download models to an external SSD (falls back to default dir if full)
+EXO_MODELS_DIRS=/Volumes/ExternalSSD/exo-models uv run exo
+
+# Run in offline mode
+EXO_OFFLINE=true uv run exo
+
+# Enable image models
+EXO_ENABLE_IMAGE_MODELS=true uv run exo
+
+# Use custom namespace for cluster isolation
+EXO_LIBP2P_NAMESPACE=my-dev-cluster uv run exo
+```
+
+---
+
 ### Using the API
+
+exo provides multiple API-compatible interfaces for maximum compatibility with existing tools:
+
+- **OpenAI Chat Completions API** - Compatible with OpenAI clients
+- **Claude Messages API** - Compatible with Anthropic's Claude format
+- **OpenAI Responses API** - Compatible with OpenAI's Responses format
+- **Ollama API** - Compatible with Ollama and tools like OpenWebUI
 
 If you prefer to interact with exo via the API, here is an example creating an instance of a small model (`mlx-community/Llama-3.2-1B-Instruct-4bit`), sending a chat completions request and deleting the instance.
 
@@ -366,14 +423,85 @@ When you're done, delete the instance by its ID (find it via `/state` or `/insta
 curl -X DELETE http://localhost:52415/instance/YOUR_INSTANCE_ID
 ```
 
+### Claude Messages API Compatibility
+
+Use the Claude Messages API format with the `/v1/messages` endpoint:
+
+```bash
+curl -N -X POST http://localhost:52415/v1/messages \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "model": "mlx-community/Llama-3.2-1B-Instruct-4bit",
+    "messages": [
+      {"role": "user", "content": "Hello"}
+    ],
+    "max_tokens": 1024,
+    "stream": true
+  }'
+```
+
+### OpenAI Responses API Compatibility
+
+Use the OpenAI Responses API format with the `/v1/responses` endpoint:
+
+```bash
+curl -N -X POST http://localhost:52415/v1/responses \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "model": "mlx-community/Llama-3.2-1B-Instruct-4bit",
+    "messages": [
+      {"role": "user", "content": "Hello"}
+    ],
+    "stream": true
+  }'
+```
+
+### Ollama API Compatibility
+
+exo supports Ollama API endpoints for compatibility with tools like OpenWebUI:
+
+```bash
+# Ollama chat
+curl -X POST http://localhost:52415/ollama/api/chat \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "model": "mlx-community/Llama-3.2-1B-Instruct-4bit",
+    "messages": [
+      {"role": "user", "content": "Hello"}
+    ],
+    "stream": false
+  }'
+
+# List models (Ollama format)
+curl http://localhost:52415/ollama/api/tags
+```
+
+### Custom Model Loading from HuggingFace
+
+You can add custom models from the HuggingFace hub:
+
+```bash
+curl -X POST http://localhost:52415/models/add \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "model_id": "mlx-community/my-custom-model"
+  }'
+```
+
+**Security Note:**
+
+Custom models requiring `trust_remote_code` in their configuration must be explicitly enabled (default is false) for security. Only enable this if you trust the model's remote code execution. Models are fetched from HuggingFace and stored locally as custom model cards.
+
 **Other useful API endpoints*:**
 
 - List all models: `curl http://localhost:52415/models`
+- List downloaded models only: `curl http://localhost:52415/models?status=downloaded`
+- Search HuggingFace: `curl "http://localhost:52415/models/search?query=llama&limit=10"`
 - Inspect instance IDs and deployment state: `curl http://localhost:52415/state`
 
 For further details, see:
 
-- API basic documentation in [docs/api.md](docs/api.md).
+- API documentation in [docs/api.md](docs/api.md).
 - API types and endpoints in [src/exo/master/api.py](src/exo/master/api.py).
 
 ---
